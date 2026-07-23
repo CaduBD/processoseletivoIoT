@@ -15,8 +15,6 @@ LIMIAR_LIVRE = 2500      # acima disso: linha livre (lux alto)
 contador_pecas = 0
 linha_bloqueada = False
 
-print("Peca detectada! Total: {}",(contador_pecas))
-
 print("Contador de Producao Inicializado")
 
 while True:
@@ -30,6 +28,6 @@ while True:
     elif linha_bloqueada and leitura > LIMIAR_LIVRE:
         linha_bloqueada = False
         contador_pecas += 1
-        print("Peca detectada! Total: {}".format(contador_pecas))
+        print("Peca detectada! Total: ".format(contador_pecas))
 
     time.sleep_ms(10)
