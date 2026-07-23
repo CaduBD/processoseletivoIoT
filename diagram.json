@@ -16,7 +16,7 @@
       "top": -77.1,
       "left": -235.9,
       "rotate": 90,
-      "attrs": {}
+      "attrs": { "lux": "800" }
     },
     {
       "type": "wokwi-pushbutton",
