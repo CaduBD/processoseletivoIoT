@@ -8,8 +8,8 @@ ldr = ADC(Pin(32))
 ldr.atten(ADC.ATTN_11DB) #Permite ler toda a faixa de 0V a ~3.3V
 
 # Parametros de calibracao
-LIMIAR_BLOQUEIO = 1500   # abaixo disso: peca bloqueando o sensor (lux baixo)
-LIMIAR_LIVRE = 2500      # acima disso: linha livre (lux alto)
+LIMIAR_LIVRE = 1500      # abaixo disso: MUITA luz, linha livre (ADC baixo)
+LIMIAR_BLOQUEIO = 2000   # acima disso: POUCA luz, peca bloqueando (ADC alto)
 TEMPO_MICRO_PARADA_MS = 5000 # tempo continuo bloqueado para considerar parada
 DEBOUNCE_MS = 50             # tempo minimo de estabilidade para validar o botao
 DEBOUNCE_LDR_MS = 50         # tempo minimo de estabilidade para validar o LDR (filtra ruido do sensor)
@@ -35,11 +35,11 @@ while True:
     leitura = ldr.read()
     agora = time.ticks_ms()
 
-    # Debounce do LDR: so aceita mudanca de estado apos leitura estavel 
-    if leitura < LIMIAR_BLOQUEIO:
-        leitura_bruta_ldr = True   # bloqueado
-    elif leitura > LIMIAR_LIVRE:
-        leitura_bruta_ldr = False  # livre
+    # Debounce do LDR: so aceita mudanca de estado apos leitura estavel
+    if leitura > LIMIAR_BLOQUEIO:
+        leitura_bruta_ldr = True   # bloqueado (pouca luz = ADC alto)
+    elif leitura < LIMIAR_LIVRE:
+        leitura_bruta_ldr = False  # livre (muita luz = ADC baixo)
     else:
         leitura_bruta_ldr = estado_ldr_bruto  # zona morta: mantem o que ja estava
 
