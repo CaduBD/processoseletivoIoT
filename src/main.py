@@ -12,12 +12,17 @@ LIMIAR_BLOQUEIO = 1500   # abaixo disso: peca bloqueando o sensor (lux baixo)
 LIMIAR_LIVRE = 2500      # acima disso: linha livre (lux alto)
 TEMPO_MICRO_PARADA_MS = 5000 # tempo continuo bloqueado para considerar parada
 DEBOUNCE_MS = 50             # tempo minimo de estabilidade para validar o botao
+DEBOUNCE_LDR_MS = 50         # tempo minimo de estabilidade para validar o LDR (filtra ruido do sensor)
 
 # Estado do sistema
 contador_pecas = 0
 linha_bloqueada = False
 tempo_inicio_bloqueio = 0
 alerta_parada_emitido = False
+
+# Estado do LDR (debounce)
+estado_ldr_bruto = None      # None = ainda indefinido (zona morta ou primeira leitura)
+tempo_ultima_mudanca_ldr = time.ticks_ms()
 
 # Estado do botao (debounce)
 estado_botao_estavel = 1     # 1 = solto (pull-up), 0 = pressionado
@@ -30,14 +35,35 @@ while True:
     leitura = ldr.read()
     agora = time.ticks_ms()
 
-    # Borda de descida: luz caiu, peca comecou a bloquear o sensor
-    if not linha_bloqueada and leitura < LIMIAR_BLOQUEIO:
+    # Debounce do LDR: so aceita mudanca de estado apos leitura estavel 
+    if leitura < LIMIAR_BLOQUEIO:
+        leitura_bruta_ldr = True   # bloqueado
+    elif leitura > LIMIAR_LIVRE:
+        leitura_bruta_ldr = False  # livre
+    else:
+        leitura_bruta_ldr = estado_ldr_bruto  # zona morta: mantem o que ja estava
+
+    if leitura_bruta_ldr != estado_ldr_bruto:
+        tempo_ultima_mudanca_ldr = agora
+        estado_ldr_bruto = leitura_bruta_ldr
+
+    ldr_estavel_bloqueado = (
+        estado_ldr_bruto is True
+        and time.ticks_diff(agora, tempo_ultima_mudanca_ldr) >= DEBOUNCE_LDR_MS
+    )
+    ldr_estavel_livre = (
+        estado_ldr_bruto is False
+        and time.ticks_diff(agora, tempo_ultima_mudanca_ldr) >= DEBOUNCE_LDR_MS
+    )
+
+    # Borda de descida: luz caiu e ficou estavel, peca comecou a bloquear o sensor
+    if not linha_bloqueada and ldr_estavel_bloqueado:
         linha_bloqueada = True
         tempo_inicio_bloqueio = agora
         alerta_parada_emitido = False
 
-    # Borda de subida: luz voltou ao normal, peca passou completamente
-    elif linha_bloqueada and leitura > LIMIAR_LIVRE:
+    # Borda de subida: luz voltou ao normal e ficou estavel, peca passou completamente
+    elif linha_bloqueada and ldr_estavel_livre:
         linha_bloqueada = False
         contador_pecas += 1
         print("Peca detectada! Total: {}".format(contador_pecas))
