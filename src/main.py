@@ -54,7 +54,7 @@ while True:
         tempo_ultima_mudanca_botao = agora
         ultima_leitura_bruta = leitura_bruta
 
-    if time.sticks_diff(agora, tempo_ultima_mudanca_botao) >= DEBOUNCE_MS:
+    if time.ticks_diff(agora, tempo_ultima_mudanca_botao) >= DEBOUNCE_MS:
         if leitura_bruta != estado_botao_estavel:
             estado_botao_estavel = leitura_bruta
             if estado_botao_estavel == 0:
