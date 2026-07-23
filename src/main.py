@@ -83,7 +83,7 @@ while True:
     if time.ticks_diff(agora, tempo_ultima_mudanca_botao) >= DEBOUNCE_MS:
         if leitura_bruta != estado_botao_estavel:
             estado_botao_estavel = leitura_bruta
-            if estado_botao_estavel == 0:
+            if estado_botao_estavel == 1:  # transicao estavel para solto (botao liberado)
                 contador_pecas = 0
                 linha_bloqueada = False
                 alerta_parada_emitido = False
