@@ -1,4 +1,4 @@
-# Contador de Produção Não-Intrusivo 
+# Contador de Produção Não-Intrusivo
 
 ## Identificação do Candidato
 
@@ -15,21 +15,28 @@ A interação com o sistema ocorre inteiramente via **Monitor Serial** (para lei
 
 ## Arquitetura do Sistema Embarcado
 
-O firmware é estruturado em um único laço principal (`while True`), executado de forma **totalmente não-bloqueante**. Isso significa que, a cada iteração do loop, o sistema lê o estado atual do sensor e do botão, atualiza sua máquina de estados interna e segue adiante — sem nunca "parar" a execução esperando algum evento externo, o que garante responsividade constante aos estímulos do ambiente simulado.
+O firmware é estruturado em um único laço principal (`while True`), executado de forma **totalmente não-bloqueante**. A cada iteração, o sistema lê o estado atual do sensor e do botão, atualiza sua máquina de estados interna e segue adiante — sem nunca "parar" a execução esperando algum evento externo, o que garante responsividade constante aos estímulos do ambiente simulado.
+
+A lógica é organizada em **funções com responsabilidade única**, cada uma cuidando de uma parte específica do comportamento do sistema, chamadas em sequência a cada iteração do loop.
 
 ### Fluxo principal (`main.py`)
 
-1. **Inicialização:**
+1. **Inicialização** (fora do loop):
    - Configuração do pino do LDR como entrada analógica (ADC), com atenuação ajustada para ler toda a faixa de tensão de 0 a ~3.3V
    - Configuração do pino do botão como entrada digital com resistor de pull-up interno
    - Impressão da mensagem de status inicial via Serial
 
-2. **Loop principal**, executado continuamente a cada ~10ms:
-   - **Leitura do LDR:** a leitura bruta do ADC é comparada contra dois limiares (`LIMIAR_LIVRE` e `LIMIAR_BLOQUEIO`), classificando o estado do sensor como "livre", "bloqueado" ou mantendo o estado anterior (zona morta)
-   - **Debounce do LDR:** a mudança de estado só é aceita como válida após permanecer estável por um tempo mínimo, filtrando ruído
-   - **Máquina de estados da linha:** ao detectar uma transição estável de "livre" para "bloqueado", marca o início do bloqueio e reinicia o alerta de parada; ao detectar a transição inversa (peça passou completamente), incrementa o contador de peças e imprime o log correspondente
-   - **Verificação de micro-parada:** enquanto a linha permanece bloqueada, o tempo decorrido é comparado ao limite configurado; se ultrapassado, o alerta é emitido uma única vez (controlado por uma flag), evitando repetição desnecessária enquanto a mesma parada persiste
-   - **Leitura do botão com debounce:** de forma similar ao LDR, a leitura do botão só é considerada válida após estabilização; ao detectar a transição de "pressionado" para "solto" (liberação do botão), o sistema executa o reset completo do turno (zera contador, desbloqueia a linha e reinicia a flag de alerta)
+2. **Loop principal** (`while True`), executado continuamente a cada ~10ms. A cada iteração, o timestamp atual (`agora = time.ticks_ms()`) é capturado uma única vez e repassado às quatro funções abaixo, garantindo que todas trabalhem sobre o mesmo instante de referência:
+
+   - **`ler_ldr_com_debounce(agora)`:** a leitura bruta do ADC é comparada contra dois limiares (`LIMIAR_LIVRE` e `LIMIAR_BLOQUEIO`), classificando o estado do sensor como "livre", "bloqueado" ou mantendo o estado anterior (zona morta). Em seguida, aplica debounce: a mudança só é considerada válida após permanecer estável por um tempo mínimo, filtrando ruído do sensor. A função retorna dois booleanos (`ldr_estavel_bloqueado`, `ldr_estavel_livre`), que alimentam a função seguinte.
+
+   - **`atualizar_contagem_de_pecas(agora, ldr_estavel_bloqueado, ldr_estavel_livre)`:** implementa a máquina de estados da linha, usando os booleanos recebidos da função anterior. Ao detectar uma transição estável de "livre" para "bloqueado", marca o instante de início do bloqueio (`tempo_inicio_bloqueio = agora`) e reinicia a flag de alerta; ao detectar a transição inversa (peça passou completamente), incrementa `contador_pecas` e imprime o log correspondente.
+
+   - **`verificar_micro_parada(agora)`:** enquanto `linha_bloqueada` for verdadeiro, compara o tempo decorrido desde `tempo_inicio_bloqueio` (via `time.ticks_diff`) contra `TEMPO_MICRO_PARADA_MS`; se ultrapassado, o alerta é emitido uma única vez, controlado pela flag `alerta_parada_emitido`, evitando repetição enquanto a mesma parada persiste.
+
+   - **`processar_botao_reset(agora)`:** aplica o mesmo princípio de debounce usado no LDR à leitura do botão; ao detectar a transição estável de "pressionado" para "solto" (liberação do botão), executa o reset completo do turno, zerando `contador_pecas`, `linha_bloqueada` e `alerta_parada_emitido`.
+
+Como todas as funções compartilham o mesmo `agora` capturado no início da iteração, e o estado é mantido em variáveis globais entre as chamadas, o fluxo se comporta como uma sequência coesa de atualizações sobre um único "retrato" do sistema a cada ciclo — evitando inconsistências que poderiam surgir se cada função lesse o relógio separadamente.
 
 ### Diagrama do fluxo principal
 
@@ -37,25 +44,27 @@ O firmware é estruturado em um único laço principal (`while True`), executado
 [Boot] → Configura pinos (LDR/ADC, Botao/pull-up) → Imprime status inicial
                                     │
                                     ▼
-                          ┌───────────────────┐
-                          │   Loop principal   │◄─────────────┐
-                          │   (while True)     │               │
-                          └─────────┬──────────┘               │
+                          ┌────────────────────┐
+                          │   Loop principal    │◄──────────────┐
+                          │   (while True)      │               │
+                          └─────────┬───────────┘               │
                                     │                           │
-        ┌───────────────────────────┼───────────────────────────┐
-        ▼                           ▼                           ▼
-  Le LDR + debounce          Verifica micro-parada        Le botao + debounce
-        │                     (se linha bloqueada)                │
-        ▼                           │                             ▼
-  Atualiza estado da        Emite alerta (1x) se          Se transicao para
-  linha (livre/bloqueada)   tempo >= limite                "solto": reseta
-        │                                                  contadores e estado
-        ▼
-  Se peca passou:
-  incrementa contador
-  e imprime log
-        │
-        └─────────────► sleep_ms(10) ─────────────────────────────┘
+                                    ▼                           │
+                     ler_ldr_com_debounce()                     │
+                                    │                           │
+                                    ▼                           │
+                  atualiza_contagem_de_pecas()                  │
+              (incrementa contador se peca passou)              │
+                                    │                           │
+                                    ▼                           │
+                    verifica_micro_parada()                     │
+              (emite alerta 1x se tempo >= limite)              │
+                                    │                           │
+                                    ▼                           │
+                   processa_botao_reset()                       │
+          (se solto apos pressionado: reseta tudo)              │
+                                    │                           │
+                                    └──────► sleep_ms(10) ──────┘
 ```
 
 ### Estrutura de estados
@@ -92,6 +101,8 @@ Toda a lógica de tempo (debounce, detecção de micro-parada) utiliza `time.tic
 
 - **Reset disparado na liberação do botão, não na pressão:** originalmente, o reset era acionado assim que o botão era pressionado. Isso causava falha no cenário de teste automatizado, pois a mensagem de confirmação era emitida antes do mecanismo de verificação (`wait-serial`) do framework de testes estar pronto para capturá-la — mesmo a mensagem aparecendo corretamente no log da simulação, o teste expirava por timeout. Alterar o disparo para o momento da liberação do botão alinhou o comportamento do firmware ao timing esperado pelo cenário de teste, sem alterar a lógica funcional do sistema.
 
+- **Decomposição em funções com responsabilidade única:** a lógica foi organizada em quatro funções especializadas (`ler_ldr_com_debounce`, `atualizar_contagem_de_pecas`, `verificar_micro_parada`, `processar_botao_reset`), em vez de manter tudo em um único bloco dentro do loop principal. Essa separação melhora a legibilidade, isola cada responsabilidade do sistema e facilita eventuais manutenções ou testes futuros direcionados a uma funcionalidade específica, sem alterar o comportamento observável do firmware.
+
 - **Ausência de funções bloqueantes longas:** a única pausa no loop principal é `time.sleep_ms(10)`, entre uma leitura e outra. Esse valor foi escolhido por ser significativamente menor que o menor intervalo relevante entre eventos nos cenários de teste (200ms), garantindo múltiplas leituras dentro de qualquer janela de estímulo, sem comprometer a responsividade do sistema.
 
 ## Resultados Obtidos
@@ -108,7 +119,7 @@ Todos os testes passam de forma consistente e reprodutível na pipeline de CI, s
 
 ### Dificuldades encontradas
 
-O maior desafio deste projeto não esteve na lógica de máquina de estados em si — que é relativamente direta — mas na **calibração e depuração do comportamento real do hardware simulado**. Duas descobertas, em particular, exigiram investigação baseada em evidências em vez de suposições:
+O maior desafio deste projeto não esteve na lógica de máquina de estados em si — que é relativamente direta — mas na **calibração e depuração do comportamento real do hardware simulado**. Três descobertas, em particular, exigiram investigação baseada em evidências em vez de suposições:
 
 1. A relação entre luminosidade e leitura do ADC não seguiu o padrão inicialmente esperado, e só foi corretamente identificada após imprimir a leitura bruta do sensor sob diferentes condições de luz e comparar com os valores exatos de `lux` utilizados nos cenários de teste.
 
